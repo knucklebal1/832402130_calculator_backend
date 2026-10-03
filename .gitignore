@@ -1,0 +1,27 @@
+# ---- Java / Maven ----
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.class
+*.jar
+*.war
+*.log
+hs_err_pid*
+
+# ---- IDE ----
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.project
+.classpath
+
+# ---- 本地私有配置（含数据库密码，禁止提交）----
+src/main/resources/application-local.yml
+src/main/resources/application-local.properties
+.env
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
