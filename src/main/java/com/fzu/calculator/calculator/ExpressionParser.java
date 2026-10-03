@@ -242,14 +242,43 @@ public class ExpressionParser {
             throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
                     "Parentheses nested too deeply (max " + maxNestingDepth + ")");
         }
+
+        int argumentStart = index;
         BigDecimal argument = parseExpression();
-        if (peek().type() != TokenType.RPAREN) {
+
+        if (peek().type() == TokenType.RPAREN) {
+            next();
+        } else if (isSingleOperand(argumentStart)) {
+            // 宽容处理：括号里只有一个操作数（如 sqrt(2、sin(30、ln(e)时自动补上右括号
+        } else {
+            // 括号里是复合表达式却漏写右括号时必须报错，
+            // 否则用户会把 sin(30+1 误当成 sin(30)+1，得到一个悄悄算错的结果
             throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
                     "Missing closing parenthesis for '" + name + "'");
         }
-        next();
         depth--;
         return applyFunction(name, argument);
+    }
+
+    /**
+     * 判断刚解析完的一段 Token 是否只是"一个操作数"。
+     *
+     * <p>操作数指一个数字字面量或一个常量名（pi、e），允许前面带一元正负号
+     * （如 {@code -2}）。除此之外出现任何运算符、括号或第二个操作数都算复合表达式。
+     *
+     * @param startIndex 这段 Token 的起始下标（含）
+     */
+    private boolean isSingleOperand(int startIndex) {
+        int operandCount = 0;
+        for (int i = startIndex; i < index; i++) {
+            TokenType type = tokens.get(i).type();
+            if (type == TokenType.NUMBER || type == TokenType.IDENTIFIER) {
+                operandCount++;
+            } else if (type != TokenType.PLUS && type != TokenType.MINUS) {
+                return false;
+            }
+        }
+        return operandCount == 1;
     }
 
     /**

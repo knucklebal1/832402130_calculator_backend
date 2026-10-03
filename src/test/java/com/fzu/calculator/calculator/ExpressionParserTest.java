@@ -272,5 +272,27 @@ class ExpressionParserTest {
             assertFails("30!", ErrorCode.NUMBER_OUT_OF_RANGE);
             assertFails("2^5000", ErrorCode.NUMBER_OUT_OF_RANGE);
         }
+
+        @Test
+        @DisplayName("括号里只有一个操作数时，漏写右括号也能算")
+        void shouldTolerateMissingClosingParenthesisForSingleNumber() {
+            assertResult("sqrt(2", "1.4142135624");
+            assertResult("sin(30", "0.5");
+            assertResult("cos(60", "0.5");
+            assertResult("abs(-7", "7");
+            assertResult("ln(e", "1");
+            assertResult("sqrt(pi", "1.7724538509");
+            assertResult("sqrt(2)+1", "2.4142135624");
+        }
+
+        @Test
+        @DisplayName("括号里是复合表达式时，漏写右括号必须报错")
+        void shouldRejectMissingClosingParenthesisForComplexExpression() {
+            assertFails("sqrt(2+3", ErrorCode.INVALID_EXPRESSION);
+            assertFails("sin(30+1", ErrorCode.INVALID_EXPRESSION);
+            assertFails("sqrt(2*3", ErrorCode.INVALID_EXPRESSION);
+            assertFails("ln(2^3", ErrorCode.INVALID_EXPRESSION);
+            assertFails("sqrt(sqrt(9", ErrorCode.INVALID_EXPRESSION);
+        }
     }
 }
