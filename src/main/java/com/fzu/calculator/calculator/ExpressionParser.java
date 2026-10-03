@@ -14,7 +14,8 @@ import java.util.List;
  * <pre>
  *   expression := term (('+' | '-') term)*
  *   term       := factor (('*' | '/') factor)*
- *   factor     := ('+' | '-') factor | primary     // 处理一元正负号，如 -5、3*-2
+ *   factor     := ('+' | '-') factor | postfix    // 处理一元正负号，如 -5、3*-2
+ *   postfix    := primary ('%')*                  // 百分号：50% = 0.5
  *   primary    := number | '(' expression ')'
  *   number     := digits ['.' digits]
  * </pre>
@@ -91,7 +92,7 @@ public class ExpressionParser {
         return value;
     }
 
-    /** factor := ('+' | '-') factor | primary */
+    /** factor := ('+' | '-') factor | postfix */
     private BigDecimal parseFactor() {
         if (peek().type() == TokenType.PLUS) {
             next();
@@ -101,7 +102,22 @@ public class ExpressionParser {
             next();
             return parseFactor().negate();
         }
-        return parsePrimary();
+        return parsePostfix();
+    }
+
+    /**
+     * postfix := primary ('%')*
+     *
+     * <p>百分号是后缀运算符，x% 等于 x 除以 100：50% = 0.5、200*10% = 20。
+     * 用 movePointLeft 做小数点移位而不是除法，结果精确且不产生舍入误差。
+     */
+    private BigDecimal parsePostfix() {
+        BigDecimal value = parsePrimary();
+        while (peek().type() == TokenType.PERCENT) {
+            next();
+            value = BigDecimals.checkRange(value.movePointLeft(2));
+        }
+        return value;
     }
 
     /** primary := number | '(' expression ')' */

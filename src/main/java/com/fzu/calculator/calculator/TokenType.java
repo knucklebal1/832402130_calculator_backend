@@ -23,6 +23,9 @@ public enum TokenType {
     /** 除号 */
     SLASH,
 
+    /** 百分号（后缀运算：x% 表示 x/100，例如 50% = 0.5） */
+    PERCENT,
+
     /** 左括号 */
     LPAREN,
 

@@ -47,6 +47,7 @@ public class Lexer {
                 case '-', '\u2212', '\u2013' -> TokenType.MINUS;  // - 、−(U+2212)、–(U+2013)
                 case '*', '\u00D7', '\u00B7' -> TokenType.STAR;   // * 、×(U+00D7)、·(U+00B7)
                 case '/', '\u00F7' -> TokenType.SLASH;            // / 、÷(U+00F7)
+                case '%', '\uFF05' -> TokenType.PERCENT;          // % 、％
                 case '(', '\uFF08' -> TokenType.LPAREN;           // ( 、（
                 case ')', '\uFF09' -> TokenType.RPAREN;           // ) 、）
                 default -> null;

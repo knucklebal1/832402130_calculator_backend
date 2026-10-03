@@ -102,6 +102,17 @@ class ExpressionParserTest {
             assertResult("1/8", "0.125");
             assertResult("2/3", "0.6666666667");
         }
+
+        @Test
+        @DisplayName("百分号：x% 等于 x/100")
+        void shouldSupportPercentage() {
+            assertResult("50%", "0.5");
+            assertResult("100%", "1");
+            assertResult("200*10%", "20");
+            assertResult("(1+2)%", "0.03");
+            assertResult("50%+25%", "0.75");
+            assertResult("-50%", "-0.5");
+        }
     }
 
     @Nested
@@ -145,7 +156,7 @@ class ExpressionParserTest {
         void shouldRejectUnsupportedCharacter() {
             assertFails("1+abc", ErrorCode.UNSUPPORTED_CHARACTER);
             assertFails("1^2", ErrorCode.UNSUPPORTED_CHARACTER);
-            assertFails("2%3", ErrorCode.UNSUPPORTED_CHARACTER);
+            assertFails("2#3", ErrorCode.UNSUPPORTED_CHARACTER);
         }
 
         @Test

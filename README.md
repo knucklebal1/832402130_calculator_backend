@@ -23,10 +23,16 @@
 ```
 expression := term (('+' | '-') term)*
 term       := factor (('*' | '/') factor)*
-factor     := ('+' | '-') factor | primary
+factor     := ('+' | '-') factor | postfix
+postfix    := primary ('%')*
 primary    := number | '(' expression ')'
 number     := digits ['.' digits]
 ```
+
+其中 `%` 是**后缀百分号**，`x%` 等于 `x / 100`（用小数点移位实现，结果精确）：
+`50% = 0.5`、`200*10% = 20`、`(1+2)% = 0.03`。
+
+一元正负号由 `factor` 这一层处理，因此 `-5`、`3*-2`、`-(2+3)*2` 都是合法表达式。
 
 ---
 
