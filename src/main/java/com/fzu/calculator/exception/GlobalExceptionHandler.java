@@ -6,7 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
-import org.springframework.web.ErrorResponseException;
+import org.springframework.web.ErrorResponse;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -57,18 +57,26 @@ public class GlobalExceptionHandler {
     /**
      * 兜底处理。
      *
-     * <p>注意：Spring Boot 3.2 对未匹配的路径会抛出 {@link ErrorResponseException}，
-     * 这里要保持它原本的 404 状态码，不能一律当成 500。
+     * <p>注意：Spring MVC 自身抛出的异常（404 路径不存在、405 方法不允许、
+     * 415 媒体类型不支持等）都实现了 {@link ErrorResponse}。
+     * 必须保留它们原本的状态码，否则会被错误地变成 500。
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> handleUnexpected(Exception ex) {
-        if (ex instanceof ErrorResponseException errorResponse) {
-            HttpStatus status = HttpStatus.valueOf(errorResponse.getStatusCode().value());
+        if (ex instanceof ErrorResponse errorResponse) {
+            HttpStatus status = HttpStatus.resolve(errorResponse.getStatusCode().value());
+            if (status == null) {
+                status = HttpStatus.INTERNAL_SERVER_ERROR;
+            }
+            ErrorCode code = switch (status) {
+                case NOT_FOUND -> ErrorCode.NOT_FOUND;
+                case INTERNAL_SERVER_ERROR -> ErrorCode.INTERNAL_ERROR;
+                default -> status.is4xxClientError() ? ErrorCode.INVALID_REQUEST : ErrorCode.INTERNAL_ERROR;
+            };
             String detail = errorResponse.getBody() == null
-                    ? ErrorCode.NOT_FOUND.defaultMessage()
+                    ? code.defaultMessage()
                     : errorResponse.getBody().getDetail();
-            return ResponseEntity.status(status)
-                    .body(ApiError.of(ErrorCode.NOT_FOUND.name(), detail));
+            return ResponseEntity.status(status).body(ApiError.of(code.name(), detail));
         }
         log.error("未预期的服务端异常", ex);
         return ResponseEntity.status(ErrorCode.INTERNAL_ERROR.status())
