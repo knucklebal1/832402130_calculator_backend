@@ -34,9 +34,12 @@ public class CalculateService {
      *
      * <p>使用 {@code @Transactional} 保证"计算成功"与"写入历史"在同一事务中：
      * 入库失败时整个请求回滚，不会出现"算出来了但历史没记住"的中间状态。
+     *
+     * @param rawExpression  用户输入的表达式
+     * @param angleInDegrees 三角函数按角度制（true）还是弧度制（false）
      */
     @Transactional
-    public CalculateResponse calculate(String rawExpression) {
+    public CalculateResponse calculate(String rawExpression, boolean angleInDegrees) {
         String expression = rawExpression == null ? "" : rawExpression.trim();
 
         if (expression.isEmpty()) {
@@ -50,7 +53,8 @@ public class CalculateService {
         BigDecimal result = new ExpressionParser(
                 expression,
                 properties.divisionScale(),
-                properties.maxNestingDepth()
+                properties.maxNestingDepth(),
+                angleInDegrees
         ).evaluate();
 
         CalculationHistory saved = historyRepository.save(new CalculationHistory(expression, result));

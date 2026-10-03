@@ -22,17 +22,40 @@
 
 ```
 expression := term (('+' | '-') term)*
-term       := factor (('*' | '/') factor)*
-factor     := ('+' | '-') factor | postfix
-postfix    := primary ('%')*
-primary    := number | '(' expression ')'
+term       := unary (('*' | '/') unary)*
+unary      := ('+' | '-') unary | power
+power      := postfix ('^' unary)?
+postfix    := primary ('%' | '!')*
+primary    := number | constant | function '(' expression ')' | '(' expression ')'
+constant   := 'pi' | 'e'
+function   := 'sqrt' | 'abs' | 'ln' | 'log' | 'sin' | 'cos' | 'tan'
 number     := digits ['.' digits]
 ```
 
-其中 `%` 是**后缀百分号**，`x%` 等于 `x / 100`（用小数点移位实现，结果精确）：
-`50% = 0.5`、`200*10% = 20`、`(1+2)% = 0.03`。
+一元正负号由 `unary` 这一层处理，因此 `-5`、`3*-2`、`-(2+3)*2` 都是合法表达式。
 
-一元正负号由 `factor` 这一层处理，因此 `-5`、`3*-2`、`-(2+3)*2` 都是合法表达式。
+### 科学计算能力
+
+| 能力 | 写法 | 示例 |
+| --- | --- | --- |
+| 乘方 | `x^y` | `2^10 = 1024`、`2^0.5 = 1.4142135624` |
+| 右结合 | `2^3^2` | `= 2^9 = 512` |
+| 阶乘 | `n!` | `5! = 120`（只接受非负整数） |
+| 百分号 | `x%` | `50% = 0.5`、`200*10% = 20` |
+| 平方根 | `sqrt(x)` | `sqrt(2) = 1.4142135624` |
+| 绝对值 | `abs(x)` | `abs(-7) = 7` |
+| 自然对数 | `ln(x)` | `ln(e) = 1` |
+| 常用对数 | `log(x)` | `log(1000) = 3` |
+| 三角函数 | `sin(x)` `cos(x)` `tan(x)` | `sin(30) = 0.5`（默认角度制） |
+| 常量 | `pi`、`e` | `pi = 3.1415926536` |
+
+优先级要点：`^` 高于一元负号，所以 `-2^2 = -4`、`(-2)^2 = 4`；`!` 与 `%` 是后缀运算，结合最紧。
+
+**精度说明**：四则运算、乘方（整数指数）、百分号、绝对值全部使用 `BigDecimal`，结果是精确值；
+三角函数、对数这类超越函数 `BigDecimal` 没有内建实现，内部借助 `double` 计算，
+最后由统一的小数位四舍五入收敛到 10 位小数。开平方使用 `BigDecimal.sqrt`，精度高于 `double`。
+
+**角度制**：请求可传 `angleMode` 字段，`"DEG"`（默认，角度制）或 `"RAD"`（弧度制）。
 
 ---
 
@@ -113,8 +136,10 @@ mvn -B test
 `POST /api/calculate`
 
 ```json
-{ "expression": "(1+2)*3" }
+{ "expression": "sin(30)+1", "angleMode": "DEG" }
 ```
+
+`angleMode` 可省略，省略时按角度制计算三角函数。
 
 成功响应 `200`：
 

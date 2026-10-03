@@ -6,6 +6,7 @@ import com.fzu.calculator.exception.ErrorCode;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 词法分析器：把表达式字符串切分成 {@link Token} 序列。
@@ -41,6 +42,16 @@ public class Lexer {
                 tokens.add(readNumber());
                 continue;
             }
+            if (isLetter(current)) {
+                tokens.add(readIdentifier());
+                continue;
+            }
+            // 允许直接输入圆周率符号 π
+            if (current == '\u03C0') {
+                tokens.add(Token.of(TokenType.IDENTIFIER, "pi", position));
+                position++;
+                continue;
+            }
 
             TokenType type = switch (current) {
                 case '+' -> TokenType.PLUS;
@@ -48,6 +59,8 @@ public class Lexer {
                 case '*', '\u00D7', '\u00B7' -> TokenType.STAR;   // * 、×(U+00D7)、·(U+00B7)
                 case '/', '\u00F7' -> TokenType.SLASH;            // / 、÷(U+00F7)
                 case '%', '\uFF05' -> TokenType.PERCENT;          // % 、％
+                case '^' -> TokenType.CARET;
+                case '!' -> TokenType.BANG;
                 case '(', '\uFF08' -> TokenType.LPAREN;           // ( 、（
                 case ')', '\uFF09' -> TokenType.RPAREN;           // ) 、）
                 default -> null;
@@ -97,5 +110,19 @@ public class Lexer {
 
     private static boolean isDigit(char c) {
         return c >= '0' && c <= '9';
+    }
+
+    private static boolean isLetter(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+    }
+
+    /** 读取标识符（常量名或函数名），统一转成小写，便于后续匹配。 */
+    private Token readIdentifier() {
+        int start = position;
+        while (position < source.length() && isLetter(source.charAt(position))) {
+            position++;
+        }
+        String lexeme = source.substring(start, position);
+        return Token.of(TokenType.IDENTIFIER, lexeme.toLowerCase(Locale.ROOT), start);
     }
 }

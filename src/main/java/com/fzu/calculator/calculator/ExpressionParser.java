@@ -4,8 +4,11 @@ import com.fzu.calculator.exception.BusinessException;
 import com.fzu.calculator.exception.ErrorCode;
 
 import java.math.BigDecimal;
+import java.math.MathContext;
 import java.math.RoundingMode;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * 表达式解析与求值器（递归下降实现）。
@@ -13,10 +16,13 @@ import java.util.List;
  * <p>文法如下，层次结构天然保证了"乘除优先于加减"：
  * <pre>
  *   expression := term (('+' | '-') term)*
- *   term       := factor (('*' | '/') factor)*
- *   factor     := ('+' | '-') factor | postfix    // 处理一元正负号，如 -5、3*-2
- *   postfix    := primary ('%')*                  // 百分号：50% = 0.5
- *   primary    := number | '(' expression ')'
+ *   term       := unary (('*' | '/') unary)*
+ *   unary      := ('+' | '-') unary | power       // 一元正负号，如 -5、3*-2
+ *   power      := postfix ('^' unary)?            // 乘方，右结合：2^3^2 = 2^9 = 512
+ *   postfix    := primary ('%' | '!')*            // 百分号 50%=0.5；阶乘 5!=120
+ *   primary    := number | constant | function '(' expression ')' | '(' expression ')'
+ *   constant   := 'pi' | 'e'
+ *   function   := 'sqrt' | 'abs' | 'ln' | 'log' | 'sin' | 'cos' | 'tan'
  *   number     := digits ['.' digits]
  * </pre>
  *
@@ -28,9 +34,27 @@ import java.util.List;
  */
 public class ExpressionParser {
 
+    /** 数学常量。 */
+    private static final Map<String, BigDecimal> CONSTANTS = Map.of(
+            "pi", new BigDecimal("3.14159265358979323846"),
+            "e", new BigDecimal("2.71828182845904523536")
+    );
+
+    /** 支持的函数名（小写）。 */
+    private static final Set<String> FUNCTIONS = Set.of(
+            "sqrt", "abs", "ln", "log", "sin", "cos", "tan"
+    );
+
+    /** 开平方时保留的内部精度，最终结果再统一按 divisionScale 四舍五入。 */
+    private static final MathContext SQRT_CONTEXT = new MathContext(20);
+
+    /** 整数指数允许的最大绝对值，防止 9^999999 这类表达式耗费大量 CPU。 */
+    private static final int MAX_INTEGER_EXPONENT = 1000;
+
     private final List<Token> tokens;
     private final int divisionScale;
     private final int maxNestingDepth;
+    private final boolean angleInDegrees;
 
     private int index;
     private int depth;
@@ -41,9 +65,21 @@ public class ExpressionParser {
      * @param maxNestingDepth 括号最大嵌套层数
      */
     public ExpressionParser(String expression, int divisionScale, int maxNestingDepth) {
+        this(expression, divisionScale, maxNestingDepth, true);
+    }
+
+    /**
+     * @param expression      用户输入的表达式
+     * @param divisionScale   除法保留的小数位数
+     * @param maxNestingDepth 括号最大嵌套层数
+     * @param angleInDegrees  三角函数按角度制（true）还是弧度制（false）计算
+     */
+    public ExpressionParser(String expression, int divisionScale, int maxNestingDepth,
+                            boolean angleInDegrees) {
         this.tokens = new Lexer(expression).tokenize();
         this.divisionScale = divisionScale;
         this.maxNestingDepth = maxNestingDepth;
+        this.angleInDegrees = angleInDegrees;
     }
 
     /**
@@ -65,7 +101,11 @@ public class ExpressionParser {
                     "Unexpected token '" + unexpected.lexeme() + "' at position "
                             + (unexpected.position() + 1));
         }
-        return BigDecimals.normalize(BigDecimals.checkRange(result));
+        // 统一按 divisionScale 四舍五入后再返回，保证接口返回值与数据库
+        // DECIMAL(38,10) 里实际存下的值完全一致（否则数据库会二次舍入，
+        // 出现"结果 1.4142135624、历史里却是别的数"这种对不上的情况）
+        BigDecimal rounded = result.setScale(divisionScale, RoundingMode.HALF_UP);
+        return BigDecimals.normalize(BigDecimals.checkRange(rounded));
     }
 
     /** expression := term (('+' | '-') term)* */
@@ -80,53 +120,81 @@ public class ExpressionParser {
         return value;
     }
 
-    /** term := factor (('*' | '/') factor)* */
+    /** term := unary (('*' | '/') unary)* */
     private BigDecimal parseTerm() {
-        BigDecimal value = parseFactor();
+        BigDecimal value = parseUnary();
         while (peek().type() == TokenType.STAR || peek().type() == TokenType.SLASH) {
             TokenType operator = next().type();
-            BigDecimal right = parseFactor();
+            BigDecimal right = parseUnary();
             value = (operator == TokenType.STAR) ? value.multiply(right) : divide(value, right);
             BigDecimals.checkRange(value);
         }
         return value;
     }
 
-    /** factor := ('+' | '-') factor | postfix */
-    private BigDecimal parseFactor() {
+    /** unary := ('+' | '-') unary | power */
+    private BigDecimal parseUnary() {
         if (peek().type() == TokenType.PLUS) {
             next();
-            return parseFactor();
+            return parseUnary();
         }
         if (peek().type() == TokenType.MINUS) {
             next();
-            return parseFactor().negate();
+            return parseUnary().negate();
         }
-        return parsePostfix();
+        return parsePower();
     }
 
     /**
-     * postfix := primary ('%')*
+     * power := postfix ('^' unary)?
      *
-     * <p>百分号是后缀运算符，x% 等于 x 除以 100：50% = 0.5、200*10% = 20。
-     * 用 movePointLeft 做小数点移位而不是除法，结果精确且不产生舍入误差。
+     * <p>乘方右结合（2^3^2 = 2^9），且优先级高于一元负号，
+     * 因此 -2^2 = -(2^2) = -4，而 (-2)^2 = 4；指数位置允许再写一元负号，如 2^-1。
+     */
+    private BigDecimal parsePower() {
+        BigDecimal base = parsePostfix();
+        if (peek().type() == TokenType.CARET) {
+            next();
+            return power(base, parseUnary());
+        }
+        return base;
+    }
+
+    /**
+     * postfix := primary ('%' | '!')*
+     *
+     * <p>百分号 x% 等于 x 除以 100，用小数点移位实现，结果精确；
+     * 阶乘 n! 只接受非负整数。
      */
     private BigDecimal parsePostfix() {
         BigDecimal value = parsePrimary();
-        while (peek().type() == TokenType.PERCENT) {
-            next();
-            value = BigDecimals.checkRange(value.movePointLeft(2));
+        while (true) {
+            if (peek().type() == TokenType.PERCENT) {
+                next();
+                value = value.movePointLeft(2);
+            } else if (peek().type() == TokenType.BANG) {
+                next();
+                value = factorial(value);
+            } else {
+                break;
+            }
+            BigDecimals.checkRange(value);
         }
         return value;
     }
 
-    /** primary := number | '(' expression ')' */
+    /** primary := number | constant | function '(' expression ')' | '(' expression ')' */
     private BigDecimal parsePrimary() {
         Token token = peek();
 
         if (token.type() == TokenType.NUMBER) {
             next();
             return token.value();
+        }
+
+        if (token.type() == TokenType.IDENTIFIER) {
+            next();
+            return parseIdentifier(token);
         }
 
         if (token.type() == TokenType.LPAREN) {
@@ -149,6 +217,164 @@ public class ExpressionParser {
                 ? "Unexpected end of expression"
                 : "Unexpected token '" + token.lexeme() + "' at position " + (token.position() + 1);
         throw new BusinessException(ErrorCode.INVALID_EXPRESSION, description);
+    }
+
+    /** 处理常量名与函数名。 */
+    private BigDecimal parseIdentifier(Token token) {
+        String name = token.lexeme();
+
+        BigDecimal constant = CONSTANTS.get(name);
+        if (constant != null) {
+            return constant;
+        }
+
+        if (!FUNCTIONS.contains(name)) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Unknown name '" + name + "' at position " + (token.position() + 1));
+        }
+
+        if (peek().type() != TokenType.LPAREN) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Function '" + name + "' must be followed by parentheses");
+        }
+        next();
+        if (++depth > maxNestingDepth) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Parentheses nested too deeply (max " + maxNestingDepth + ")");
+        }
+        BigDecimal argument = parseExpression();
+        if (peek().type() != TokenType.RPAREN) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Missing closing parenthesis for '" + name + "'");
+        }
+        next();
+        depth--;
+        return applyFunction(name, argument);
+    }
+
+    /**
+     * 乘方运算。
+     *
+     * <p>整数指数走 {@link BigDecimal#pow(int)}，结果是精确值；
+     * 非整数指数（如 2^0.5）必须借助 {@link Math#pow}，此时会引入浮点误差，
+     * 由最终统一的四舍五入收敛到 10 位小数。
+     */
+    private BigDecimal power(BigDecimal base, BigDecimal exponent) {
+        BigDecimal stripped = exponent.stripTrailingZeros();
+
+        if (stripped.scale() <= 0) {
+            int exp;
+            try {
+                exp = stripped.intValueExact();
+            } catch (ArithmeticException ex) {
+                throw new BusinessException(ErrorCode.NUMBER_OUT_OF_RANGE, "Exponent is too large");
+            }
+            if (Math.abs((long) exp) > MAX_INTEGER_EXPONENT) {
+                throw new BusinessException(ErrorCode.NUMBER_OUT_OF_RANGE,
+                        "Exponent is too large (max " + MAX_INTEGER_EXPONENT + ")");
+            }
+            if (exp >= 0) {
+                return base.pow(exp);
+            }
+            BigDecimal denominator = base.pow(-exp);
+            if (denominator.signum() == 0) {
+                throw new BusinessException(ErrorCode.DIVIDE_BY_ZERO);
+            }
+            return BigDecimal.ONE.divide(denominator, divisionScale + 10, RoundingMode.HALF_UP);
+        }
+
+        if (base.signum() < 0) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "A negative base cannot be raised to a fractional exponent");
+        }
+        double result = Math.pow(base.doubleValue(), exponent.doubleValue());
+        if (!Double.isFinite(result)) {
+            throw new BusinessException(ErrorCode.NUMBER_OUT_OF_RANGE, "Result is out of range");
+        }
+        return BigDecimal.valueOf(result);
+    }
+
+    /**
+     * 阶乘：只接受非负整数。
+     *
+     * <p>一边乘一边做范围校验，像 100000! 这种会在超出范围时立刻报错，
+     * 不会真的把整个大数算出来。
+     */
+    private BigDecimal factorial(BigDecimal value) {
+        BigDecimal stripped = value.stripTrailingZeros();
+        if (stripped.signum() < 0 || stripped.scale() > 0) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Factorial requires a non-negative integer");
+        }
+
+        int n;
+        try {
+            n = stripped.intValueExact();
+        } catch (ArithmeticException ex) {
+            throw new BusinessException(ErrorCode.NUMBER_OUT_OF_RANGE,
+                    "Factorial operand is too large");
+        }
+
+        BigDecimal result = BigDecimal.ONE;
+        for (int i = 2; i <= n; i++) {
+            result = result.multiply(BigDecimal.valueOf(i));
+            BigDecimals.checkRange(result);
+        }
+        return result;
+    }
+
+    /**
+     * 应用函数。
+     *
+     * <p>abs 用 BigDecimal 精确求值，sqrt 用 BigDecimal.sqrt 保证高精度；
+     * 三角函数与对数属于超越函数，BigDecimal 没有内建实现，
+     * 这里借助 double 计算后由最终的四舍五入收敛到 10 位小数。
+     */
+    private BigDecimal applyFunction(String name, BigDecimal argument) {
+        if ("abs".equals(name)) {
+            return argument.abs();
+        }
+        if ("sqrt".equals(name)) {
+            if (argument.signum() < 0) {
+                throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                        "Cannot take the square root of a negative number");
+            }
+            return argument.sqrt(SQRT_CONTEXT);
+        }
+
+        double x = argument.doubleValue();
+        double y = switch (name) {
+            case "ln" -> {
+                requirePositive(x, "ln");
+                yield Math.log(x);
+            }
+            case "log" -> {
+                requirePositive(x, "log");
+                yield Math.log10(x);
+            }
+            case "sin" -> Math.sin(toRadians(x));
+            case "cos" -> Math.cos(toRadians(x));
+            case "tan" -> Math.tan(toRadians(x));
+            default -> throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Unknown function '" + name + "'");
+        };
+
+        if (!Double.isFinite(y)) {
+            throw new BusinessException(ErrorCode.NUMBER_OUT_OF_RANGE, "Result is out of range");
+        }
+        return BigDecimal.valueOf(y);
+    }
+
+    private void requirePositive(double x, String name) {
+        if (x <= 0) {
+            throw new BusinessException(ErrorCode.INVALID_EXPRESSION,
+                    "Function '" + name + "' requires a positive argument");
+        }
+    }
+
+    /** 角度制时把参数换算成弧度，弧度制时原样返回。 */
+    private double toRadians(double x) {
+        return angleInDegrees ? Math.toRadians(x) : x;
     }
 
     /** 除法：除零单独报错，结果按 divisionScale 四舍五入。 */

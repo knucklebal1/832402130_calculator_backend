@@ -26,6 +26,6 @@ public class CalculateController {
 
     @PostMapping("/calculate")
     public CalculateResponse calculate(@Valid @RequestBody CalculateRequest request) {
-        return calculateService.calculate(request.expression());
+        return calculateService.calculate(request.expression(), request.angleInDegrees());
     }
 }

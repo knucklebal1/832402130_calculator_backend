@@ -145,7 +145,8 @@ class ExpressionParserTest {
                 "1..2",
                 ".",
                 "()",
-                "1++*2"
+                "1++*2",
+                "1+abc"
         })
         void shouldRejectInvalidExpression(String expression) {
             assertFails(expression, ErrorCode.INVALID_EXPRESSION);
@@ -154,9 +155,9 @@ class ExpressionParserTest {
         @Test
         @DisplayName("非法字符")
         void shouldRejectUnsupportedCharacter() {
-            assertFails("1+abc", ErrorCode.UNSUPPORTED_CHARACTER);
-            assertFails("1^2", ErrorCode.UNSUPPORTED_CHARACTER);
-            assertFails("2#3", ErrorCode.UNSUPPORTED_CHARACTER);
+            assertFails("1#2", ErrorCode.UNSUPPORTED_CHARACTER);
+            assertFails("1@2", ErrorCode.UNSUPPORTED_CHARACTER);
+            assertFails("2$3", ErrorCode.UNSUPPORTED_CHARACTER);
         }
 
         @Test
@@ -185,6 +186,91 @@ class ExpressionParserTest {
             assertEquals("100", BigDecimals.toPlainString(new BigDecimal("1E+2")));
             assertEquals("3", BigDecimals.toPlainString(new BigDecimal("3.00")));
             assertEquals("0", BigDecimals.toPlainString(BigDecimal.ZERO));
+        }
+    }
+
+    @Nested
+    @DisplayName("科学计算")
+    class ScientificCalculation {
+
+        @Test
+        @DisplayName("乘方：^ 右结合，且优先于一元负号")
+        void shouldSupportPower() {
+            assertResult("2^10", "1024");
+            assertResult("2^3^2", "512");
+            assertResult("-2^2", "-4");
+            assertResult("(-2)^2", "4");
+            assertResult("2^-1", "0.5");
+            assertResult("2^0.5", "1.4142135624");
+            assertResult("9^0.5", "3");
+        }
+
+        @Test
+        @DisplayName("阶乘")
+        void shouldSupportFactorial() {
+            assertResult("0!", "1");
+            assertResult("5!", "120");
+            assertResult("3!+2", "8");
+            assertResult("(2+3)!", "120");
+            assertResult("3!!", "720");
+        }
+
+        @Test
+        @DisplayName("平方根与绝对值")
+        void shouldSupportSqrtAndAbs() {
+            assertResult("sqrt(9)", "3");
+            assertResult("sqrt(2)", "1.4142135624");
+            assertResult("abs(-7)", "7");
+            assertResult("sqrt(16)+abs(-4)", "8");
+        }
+
+        @Test
+        @DisplayName("对数")
+        void shouldSupportLogarithms() {
+            assertResult("ln(1)", "0");
+            assertResult("ln(e)", "1");
+            assertResult("log(100)", "2");
+            assertResult("log(1000)", "3");
+        }
+
+        @Test
+        @DisplayName("常量 pi 与 e")
+        void shouldSupportConstants() {
+            assertResult("pi", "3.1415926536");
+            assertResult("e", "2.7182818285");
+            assertResult("pi*2", "6.2831853072");
+        }
+
+        @Test
+        @DisplayName("三角函数默认按角度制")
+        void shouldUseDegreesByDefault() {
+            assertResult("sin(0)", "0");
+            assertResult("sin(30)", "0.5");
+            assertResult("cos(60)", "0.5");
+            assertResult("tan(45)", "1");
+        }
+
+        @Test
+        @DisplayName("弧度制：sin(pi/2) = 1")
+        void shouldSupportRadianMode() {
+            BigDecimal value = new ExpressionParser("sin(pi/2)", DIVISION_SCALE, MAX_NESTING_DEPTH, false)
+                    .evaluate();
+            assertEquals(0, value.compareTo(BigDecimal.ONE));
+        }
+
+        @Test
+        @DisplayName("科学计算的各种非法输入")
+        void shouldRejectInvalidScientificInput() {
+            assertFails("sqrt(-1)", ErrorCode.INVALID_EXPRESSION);
+            assertFails("ln(0)", ErrorCode.INVALID_EXPRESSION);
+            assertFails("log(-5)", ErrorCode.INVALID_EXPRESSION);
+            assertFails("(-2)!", ErrorCode.INVALID_EXPRESSION);
+            assertFails("2.5!", ErrorCode.INVALID_EXPRESSION);
+            assertFails("foo(1)", ErrorCode.INVALID_EXPRESSION);
+            assertFails("sin 30", ErrorCode.INVALID_EXPRESSION);
+            assertFails("(-8)^0.5", ErrorCode.INVALID_EXPRESSION);
+            assertFails("30!", ErrorCode.NUMBER_OUT_OF_RANGE);
+            assertFails("2^5000", ErrorCode.NUMBER_OUT_OF_RANGE);
         }
     }
 }

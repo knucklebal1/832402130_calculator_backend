@@ -26,6 +26,15 @@ public enum TokenType {
     /** 百分号（后缀运算：x% 表示 x/100，例如 50% = 0.5） */
     PERCENT,
 
+    /** 乘方号 */
+    CARET,
+
+    /** 阶乘号（后缀运算：5! = 120） */
+    BANG,
+
+    /** 标识符：常量名（pi、e）或函数名（sqrt、sin…） */
+    IDENTIFIER,
+
     /** 左括号 */
     LPAREN,
 
