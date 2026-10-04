@@ -75,13 +75,19 @@ public class HistoryService {
         historyRepository.deleteById(id);
     }
 
-    /** 清空全部历史记录，返回被删除的条数。 */
-    @Transactional
+    /**
+     * 清空全部历史记录，返回被删除的条数。
+     *
+     * <p>清空之后会把自增主键重置回 1，这样下一轮计算又是从 #1 开始。
+     * 这里不加 {@code @Transactional}：删除与重置自增各自在自己的事务里完成，
+     * 避免 MySQL 的 DDL 隐式提交把外层事务切成两截。
+     */
     public long deleteAll() {
         long count = historyRepository.count();
         if (count > 0) {
             historyRepository.deleteAllInBatch();
         }
+        historyRepository.resetAutoIncrement();
         return count;
     }
 
