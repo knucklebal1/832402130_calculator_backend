@@ -1,6 +1,7 @@
 package com.fzu.calculator.service;
 
 import com.fzu.calculator.calculator.BigDecimals;
+import com.fzu.calculator.calculator.OperatorAnalyzer;
 import com.fzu.calculator.exception.BusinessException;
 import com.fzu.calculator.exception.ErrorCode;
 import com.fzu.calculator.model.dto.HistoryItem;
@@ -32,8 +33,6 @@ public class HistoryService {
 
     /** 每页最大条数，防止前端传入过大的 size 拖垮数据库。 */
     private static final int MAX_PAGE_SIZE = 100;
-
-    private static final char[] OPERATORS = {'+', '-', '*', '/'};
 
     private final CalculationHistoryRepository historyRepository;
 
@@ -94,23 +93,18 @@ public class HistoryService {
             return new HistoryStatsResponse(true, 0, null, 0, null, null);
         }
 
-        Map<Character, Long> operatorCounts = new LinkedHashMap<>();
-        for (char operator : OPERATORS) {
-            operatorCounts.put(operator, 0L);
-        }
+        // 逐条解析历史记录里的表达式，只统计真正做了运算的运算符。
+        // 不能直接数 + - * / 字符：abs(-7) 里的负号、3*-2 里的负号都不是运算符，
+        // 而且 ^ ! % 这些运算符也要一并统计进来。
+        Map<String, Long> operatorCounts = new LinkedHashMap<>();
         for (CalculationHistory history : all) {
-            String expression = history.getExpression();
-            for (int i = 0; i < expression.length(); i++) {
-                char c = expression.charAt(i);
-                if (operatorCounts.containsKey(c)) {
-                    operatorCounts.merge(c, 1L, Long::sum);
-                }
-            }
+            OperatorAnalyzer.countUsages(history.getExpression())
+                    .forEach((symbol, count) -> operatorCounts.merge(symbol, count, Long::sum));
         }
 
-        Map.Entry<Character, Long> top = operatorCounts.entrySet().stream()
-                .max(Comparator.comparingLong(Map.Entry::getValue))
-                .orElseThrow();
+        Map.Entry<String, Long> top = operatorCounts.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .orElse(null);
 
         BigDecimal sum = all.stream()
                 .map(CalculationHistory::getResult)
@@ -126,8 +120,8 @@ public class HistoryService {
         return new HistoryStatsResponse(
                 true,
                 all.size(),
-                top.getValue() > 0 ? String.valueOf(top.getKey()) : null,
-                top.getValue(),
+                top == null ? null : top.getKey(),
+                top == null ? 0L : top.getValue(),
                 BigDecimals.toPlainString(average),
                 latestAt
         );
